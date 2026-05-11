@@ -1,0 +1,325 @@
+---
+title: "What makes a winning YC startup?"
+subtitle: "And has the formula changed?"
+author: "Alibek Mamyrbay &middot; Lawrence University Datathon"
+output:
+  revealjs::revealjs_presentation:
+    theme: white
+    highlight: pygments
+    transition: slide
+    self_contained: true
+    css: theme.css
+    reveal_options:
+      slideNumber: true
+      progress: true
+      controls: true
+      hash: true
+      width: 1280
+      height: 740
+      margin: 0.06
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.align = "center", out.width = "92%")
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(readr); library(stringr)
+  library(plotly); library(ggplot2); library(scales); library(forcats)
+  library(reactable); library(htmltools); library(broom); library(ggrepel)
+})
+proj_root <- rprojroot::find_root_file(".", criterion = rprojroot::has_dir("data"))
+knitr::opts_knit$set(root.dir = proj_root)
+```
+
+```{r load-data}
+NOT_STARTED <- c("Summer 2026", "Fall 2026")
+clean            <- read_csv(file.path(proj_root, "data/processed/yc_clean.csv"), show_col_types = FALSE) |>
+  filter(!batch %in% NOT_STARTED)
+q1_industry      <- read_csv(file.path(proj_root, "data/processed/q1_industry.csv"), show_col_types = FALSE)
+q2_industry_year <- read_csv(file.path(proj_root, "data/processed/q2_industry_year.csv"), show_col_types = FALSE)
+q3_era           <- read_csv(file.path(proj_root, "data/processed/q3_era_long.csv"), show_col_types = FALSE)
+q1_logit         <- read_csv(file.path(proj_root, "data/processed/q1_logit.csv"), show_col_types = FALSE)
+scrape_meta      <- jsonlite::fromJSON(file.path(proj_root, "data/raw/scrape_meta.json"))
+
+YC_ORANGE <- "#F26625"
+YC_DARK   <- "#1F2937"
+GREY_MED  <- "#9CA3AF"
+industry_palette <- c(
+  "B2B"="#3B82F6","Consumer"="#F26625","Healthcare"="#10B981","Fintech"="#8B5CF6",
+  "Industrials"="#F59E0B","Real Estate and Construction"="#EF4444",
+  "Education"="#06B6D4","Government"="#6B7280"
+)
+```
+
+## The dataset
+
+<div class="two-col">
+<div>
+<h3>What we built</h3>
+<ul>
+```{r dataset-stats, include=FALSE}
+analysis_batches <- setdiff(unique(clean$batch), "Unspecified")
+analysis_years   <- clean |> filter(batch != "Unspecified") |> pull(batch_year) |> na.omit() |> unique()
+```
+
+<li>Scraped <b>`r format(nrow(clean), big.mark=",")`</b> companies across <b>`r length(analysis_batches)`</b> batches that have started (through Spring 2026)</li>
+<li>Source: <a href="https://www.ycombinator.com/companies">ycombinator.com/companies</a> · <b>`r min(analysis_years)`–`r max(analysis_years)`</b>, `r length(analysis_years)` years</li>
+<li>Hit Algolia search index directly (`YCCompany_production`)</li>
+<li>Faceted by batch to bypass Algolia's 1,000-result pagination cap</li>
+<li>Cleaned, joined, factored in R (`tidyverse` + `httr2`)</li>
+</ul>
+</div>
+<div>
+<h3>Status mix</h3>
+```{r data-status, fig.width=5.2, fig.height=3.2, out.width="100%"}
+clean |>
+  count(status) |>
+  filter(!is.na(status)) |>
+  mutate(status = fct_reorder(status, n)) |>
+  ggplot(aes(n, status, fill = status)) +
+  geom_col(width = 0.7) +
+  geom_text(aes(label = scales::comma(n)), hjust = -0.15, color = YC_DARK, fontface = "bold") +
+  scale_fill_manual(values = c("Active" = YC_ORANGE, "Acquired" = "#10B981",
+                               "Public" = "#3B82F6", "Inactive" = "#9CA3AF")) +
+  scale_x_continuous(labels = scales::comma, expand = expansion(mult = c(0, 0.18))) +
+  labs(x = NULL, y = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "none",
+        panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(),
+        axis.text.x = element_blank())
+```
+</div>
+</div>
+
+<p class="caption">Source: ycombinator.com/companies, scraped `r format(as.Date(scrape_meta$scrape_date), "%b %d, %Y")`. Data is YC's self-reported labels.</p>
+
+## Three questions
+
+<div class="big-questions">
+<div class="q"><span class="qnum">1</span>What characteristics distinguish a <b>winning</b> YC startup?</div>
+<div class="q"><span class="qnum">2</span>How has YC's <b>portfolio evolved</b> over 20 years?</div>
+<div class="q"><span class="qnum">3</span>Has the <b>recipe for success</b> changed?</div>
+</div>
+
+<p class="caption">"Winner" = reached <b>Acquired</b> or <b>Public</b> status. "Mature" = batch ≥5 years old (companies have had time to exit).</p>
+
+## Q1 · Fintech and B2B lead the exit hit rate {.section-q1}
+
+```{r q1-industry, fig.width=11, fig.height=5.6, out.width="100%"}
+q1_industry |>
+  filter(group != "Unspecified") |>
+  mutate(group = fct_reorder(group, p)) |>
+  ggplot(aes(x = group, y = p)) +
+  geom_segment(aes(xend = group, y = 0, yend = p), color = GREY_MED, linewidth = 0.5) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.25, color = YC_DARK, linewidth = 0.5) +
+  geom_point(aes(size = n_total), color = YC_ORANGE) +
+  geom_text(aes(y = hi, label = sprintf("%.0f%%  (n=%d)", p * 100, n_total)),
+            hjust = -0.15, vjust = 0.5, size = 4.2, color = YC_DARK, fontface = "bold") +
+  scale_y_continuous(labels = label_percent(), limits = c(0, 0.85), expand = expansion(mult = c(0, 0.05))) +
+  scale_size_continuous(range = c(3, 10), guide = "none") +
+  coord_flip() +
+  labs(x = NULL, y = "Exit hit rate (Acquired ∪ Public among mature, non-Active companies)") +
+  theme_minimal(base_size = 14) +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x = element_text(face = "bold"))
+```
+
+<p class="takeaway">Among mature batches: Fintech and B2B both ~52%. Consumer drags the average — startups serving everyday users are fundamentally harder.</p>
+
+## Q1 · Survival is a function of size — but size is also an outcome {.section-q1}
+
+<div class="two-col">
+<div>
+```{r q1-team, fig.width=6, fig.height=4.5, out.width="100%"}
+read_csv(file.path(proj_root, "data/processed/q1_team.csv"), show_col_types = FALSE) |>
+  mutate(group = factor(group, levels = c("1-5","6-10","11-25","26-100","101-500","500+"))) |>
+  ggplot(aes(x = group, y = p)) +
+  geom_col(fill = YC_ORANGE, alpha = 0.85, width = 0.6) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.2, color = YC_DARK) +
+  geom_text(aes(label = sprintf("%.0f%%", p * 100)),
+            vjust = -0.5, color = YC_DARK, fontface = "bold", size = 4,
+            position = position_nudge(y = 0.05)) +
+  scale_y_continuous(labels = label_percent(), limits = c(0, 1.1), expand = expansion(mult = c(0, 0.02))) +
+  labs(x = "Team size (current)", y = "Exit hit rate") +
+  theme_minimal(base_size = 13) +
+  theme(panel.grid.major.x = element_blank(), panel.grid.minor = element_blank())
+```
+</div>
+<div class="logit-side">
+<h3>Controlling for everything: <b>team size still wins</b></h3>
+<p style="margin-top:6px">Logit of <b>Successful vs Failed</b> on industry, region, team-size bucket, and era:</p>
+<ul>
+<li>26–100 employees vs 1–5: <b>7.1×</b> higher odds (p&lt;0.001)</li>
+<li>101–500 vs 1–5: <b>14.7×</b> (p&lt;0.001)</li>
+<li>USA vs Non-US: <b>1.3×</b> (n.s.) — geography barely matters</li>
+<li>2015–2021 vs 2005–2014: <b>0.71×</b> (p=0.013)</li>
+</ul>
+<p class="caption-sm">n=`r format(nobs(glm(I(outcome=="Successful") ~ 1, data=clean, family=binomial)), big.mark=",")`+. Reference: B2B / 1–5 / Non-US / 2005–2014.</p>
+</div>
+</div>
+
+## Q2 · B2B has eaten YC. Consumer has lost the throne. {.section-q2}
+
+```{r q2-evo, fig.width=11.5, fig.height=5.4, out.width="100%"}
+industry_levels <- q2_industry_year |>
+  group_by(industry) |> summarise(total = sum(n)) |> arrange(desc(total)) |> pull(industry)
+industry_levels <- setdiff(industry_levels, "Unspecified")
+stack_order <- rev(industry_levels)
+
+evo <- q2_industry_year |>
+  filter(industry != "Unspecified", batch_year >= 2007, batch_year <= 2024) |>
+  mutate(tip = sprintf("Batch %d — %s\n%d companies (%.1f%% of batch)",
+                       batch_year, industry, n, share * 100))
+
+p <- plot_ly()
+for (ind in stack_order) {
+  d <- evo |> filter(industry == ind)
+  p <- p |> add_trace(
+    data = d, x = ~batch_year, y = ~share,
+    name = ind, legendgroup = ind,
+    type = "scatter", mode = "none",
+    stackgroup = "one", groupnorm = "percent",
+    fillcolor = unname(industry_palette[[ind]]),
+    text = ~tip, hoverinfo = "text"
+  )
+}
+p |> layout(
+    xaxis = list(title = "<b>Batch year</b>", dtick = 2, gridcolor = "white"),
+    yaxis = list(title = "<b>Share of batch</b>", ticksuffix = "%", gridcolor = "white"),
+    legend = list(orientation = "v", x = 1.02, traceorder = "reversed"),
+    paper_bgcolor = "white", plot_bgcolor = "#F9FAFB",
+    margin = list(t = 20, l = 70, r = 30, b = 50),
+    hovermode = "closest"
+  ) |>
+  config(displaylogo = FALSE,
+         modeBarButtonsToRemove = c("autoScale2d","lasso2d","select2d"))
+```
+
+<p class="takeaway">2010: Consumer ~35% of batch. 2024: barely 10%. The post-mobile gold rush is over; B2B SaaS now defines YC.</p>
+
+## Q2 · YC has gone global {.section-q2}
+
+```{r q2-map, fig.width=11, fig.height=5.0, out.width="100%"}
+iso_map <- c(
+  "USA"="USA","United Kingdom"="GBR","Canada"="CAN","India"="IND","Mexico"="MEX",
+  "France"="FRA","Germany"="DEU","Brazil"="BRA","Spain"="ESP","Argentina"="ARG",
+  "Singapore"="SGP","Australia"="AUS","Netherlands"="NLD","Israel"="ISR","Japan"="JPN",
+  "Sweden"="SWE","Switzerland"="CHE","Nigeria"="NGA","Kenya"="KEN","South Africa"="ZAF",
+  "Egypt"="EGY","Indonesia"="IDN","Vietnam"="VNM","Pakistan"="PAK","Philippines"="PHL",
+  "Colombia"="COL","Chile"="CHL","Peru"="PER","Estonia"="EST","Ireland"="IRL",
+  "Italy"="ITA","Portugal"="PRT","Poland"="POL","Denmark"="DNK","Norway"="NOR",
+  "Finland"="FIN","Belgium"="BEL","Turkey"="TUR","South Korea"="KOR","China"="CHN",
+  "Hong Kong"="HKG","Taiwan"="TWN","UAE"="ARE","Saudi Arabia"="SAU","Bangladesh"="BGD",
+  "New Zealand"="NZL","Czech Republic"="CZE","Romania"="ROU","Hungary"="HUN","Greece"="GRC",
+  "Lithuania"="LTU","Latvia"="LVA","Bulgaria"="BGR","Croatia"="HRV","Slovenia"="SVN",
+  "Ghana"="GHA","Uganda"="UGA","Tanzania"="TZA","Ethiopia"="ETH","Morocco"="MAR",
+  "Tunisia"="TUN","Senegal"="SEN","Rwanda"="RWA","Ecuador"="ECU","Uruguay"="URY",
+  "Bolivia"="BOL","Paraguay"="PRY","Costa Rica"="CRI","Panama"="PAN","Guatemala"="GTM",
+  "Dominican Republic"="DOM","Iceland"="ISL","Luxembourg"="LUX","Sri Lanka"="LKA",
+  "Slovakia"="SVK","Serbia"="SRB","Belarus"="BLR","Kazakhstan"="KAZ","Uzbekistan"="UZB",
+  "Georgia"="GEO","Armenia"="ARM","Lebanon"="LBN","Mongolia"="MNG","Nepal"="NPL",
+  "Malaysia"="MYS","Thailand"="THA","Austria"="AUT","Algeria"="DZA","Bahrain"="BHR",
+  "Namibia"="NAM","Venezuela"="VEN","Zambia"="ZMB","Kyrgyzstan"="KGZ","Puerto Rico"="PRI",
+  "London"="GBR","Bengaluru"="IND"
+)
+country_counts <- clean |>
+  filter(!is.na(country), country != "Remote") |>
+  count(country, name = "n_companies") |>
+  mutate(iso3 = unname(iso_map[country])) |>
+  filter(!is.na(iso3))
+
+plot_geo(country_counts) |>
+  add_trace(z = ~n_companies, locations = ~iso3, text = ~country,
+            color = ~n_companies, colors = c("#FFE4D6", "#F26625", "#7C2D12"),
+            hovertemplate = "<b>%{text}</b><br>%{z} YC companies<extra></extra>",
+            marker = list(line = list(color = "white", width = 0.5))) |>
+  colorbar(title = "Companies", thickness = 12, len = 0.55) |>
+  layout(geo = list(showframe = FALSE, projection = list(type = "natural earth"),
+                    showcountries = TRUE, countrycolor = "#E5E7EB", bgcolor = "white"),
+         margin = list(t = 0, l = 0, r = 0, b = 0)) |>
+  config(displaylogo = FALSE)
+```
+
+<p class="takeaway">Top non-US: India (190), UK (161), Canada (133), Mexico (79). Once a Bay Area club, YC is now a global accelerator.</p>
+
+## Q3 · The 2010s playbook stopped paying off {.section-q3}
+
+```{r q3-slope, fig.width=10, fig.height=5.4, out.width="92%"}
+slope <- q3_era |>
+  mutate(industry = factor(industry, levels = sort(unique(industry)))) |>
+  select(industry, era_q3, p, n_total, lo, hi)
+slope_colors <- unname(industry_palette[levels(slope$industry)])
+
+plot_ly() |>
+  add_trace(
+    data = slope,
+    x = ~era_q3, y = ~p, color = ~industry, colors = slope_colors,
+    type = "scatter", mode = "lines+markers",
+    line = list(width = 4),
+    marker = list(size = 13, line = list(color = "white", width = 2)),
+    text = ~sprintf("<b>%s</b><br>%s: %.0f%% (n=%d)<br>95%% CI: %.0f–%.0f%%",
+                    industry, era_q3, p*100, n_total, lo*100, hi*100),
+    hoverinfo = "text"
+  ) |>
+  layout(
+    xaxis = list(title = "<b>Batch era</b>", showgrid = FALSE),
+    yaxis = list(title = "<b>Exit hit rate</b>", tickformat = ".0%", range = c(0.2, 0.65)),
+    paper_bgcolor = "white", plot_bgcolor = "#F9FAFB",
+    margin = list(t = 20, l = 70, r = 30, b = 50),
+    hovermode = "closest", showlegend = TRUE
+  ) |>
+  config(displaylogo = FALSE)
+```
+
+<p class="takeaway">Every industry's hit rate dropped from 2005–2014 to 2015–2021. Consumer fell hardest (38% → 29%) — even controlling for batch maturity. The 2010s really were special.</p>
+
+## Findings, in one slide {.dark-slide}
+
+<div class="findings">
+<div class="finding">
+<h3 class="orange">1\. Industry matters less than you think</h3>
+<p>Fintech (52%) ≈ B2B (52%). Consumer (34%) is the loser. After controlling for size & era, raw industry effects shrink.</p>
+</div>
+<div class="finding">
+<h3 class="orange">2\. Geography barely matters</h3>
+<p>Non-US success rate is <b>45%</b> vs USA <b>46%</b>. The "you must be in the Bay Area" myth is dead — at least for clearing the YC bar.</p>
+</div>
+<div class="finding">
+<h3 class="orange">3\. The era effect is real</h3>
+<p>Mature 2015–2021 batches exit at <b>0.71×</b> the rate of 2005–2014, controlling for everything else. The 2010s were a uniquely fertile decade.</p>
+</div>
+</div>
+
+## Limitations & ethics
+
+<div class="two-col">
+<div>
+<h3>Methodological caveats</h3>
+<ul>
+<li><b>Survivorship bias:</b> YC may de-emphasize Inactive companies — true failure rate could be higher</li>
+<li><b>Censoring:</b> "exit hit rates" exclude still-active companies; recent batches still have time to surprise</li>
+<li><b>Self-reported labels:</b> Status, industry, team size are YC's classification, not audited</li>
+<li><b>500+ team bucket:</b> showed perfect separation in the regression (100% success) — excluded from the model</li>
+</ul>
+</div>
+<div>
+<h3>Sustainability & ethics</h3>
+<ul>
+<li>Public Algolia API only — no scraping behind auth walls</li>
+<li>1 request/second rate limit, identifying User-Agent</li>
+<li>No PII beyond what YC already publishes</li>
+<li>Dataset published alongside this deck for verification & reuse</li>
+<li>Source: <a href="https://www.ycombinator.com/companies">ycombinator.com/companies</a> (scraped `r format(as.Date(scrape_meta$scrape_date), "%b %d, %Y")`)</li>
+</ul>
+</div>
+</div>
+
+## Thank you {.dark-slide .closing}
+
+<div class="closing-content">
+<h1 class="orange">Questions?</h1>
+<p class="byline">Code + dataset + this deck shipped together.</p>
+<p class="caption-sm" style="color:#9CA3AF;margin-top:32px">
+Built in R with <code>httr2</code>, <code>tidyverse</code>, <code>ggplot2</code>, <code>plotly</code>, <code>reactable</code>, <code>revealjs</code>.
+</p>
+</div>

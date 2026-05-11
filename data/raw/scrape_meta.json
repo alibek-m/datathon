@@ -1,0 +1,9 @@
+{
+  "scrape_date": "2026-05-07",
+  "app_id": "45BWZJ1SGC",
+  "index": "YCCompany_production",
+  "total_expected": 5884,
+  "hits_in_file": 5884,
+  "batches_seen": 49,
+  "source_url": "https://www.ycombinator.com/companies"
+}
